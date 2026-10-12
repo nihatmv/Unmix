@@ -1,0 +1,9 @@
+# librosa depends on numba/llvmlite. Their newest releases have no prebuilt
+# package for Intel Macs, and compiling them from source fails, so tell pip to
+# pick the newest version that does come prebuilt.
+--only-binary numba,llvmlite
+
+librosa>=0.10
+numpy>=1.23
+matplotlib>=3.7
+soundfile>=0.12

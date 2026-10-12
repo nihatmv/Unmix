@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# Audio clips and generated plots stay local; keep the empty folders.
+input/*
+!input/.gitkeep
+output/*
+!output/.gitkeep

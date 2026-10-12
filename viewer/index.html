@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Unmix viewer</title>
+<style>
+  body {
+    font-family: system-ui, sans-serif;
+    max-width: 1100px;
+    margin: 2rem auto;
+    padding: 0 1rem;
+    color: #0b0b0b;
+    background: #fcfcfb;
+  }
+  h1 { font-size: 1.4rem; }
+  h2 { font-size: 1rem; margin: 0; }
+  button, select { font: inherit; padding: 0.35rem 0.9rem; }
+  button { cursor: pointer; }
+  button:disabled { cursor: default; }
+  select { max-width: 100%; }
+  .toolbar, .layer-head { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+  .toolbar { margin-bottom: 1rem; }
+  .picker { padding-bottom: 1rem; border-bottom: 1px solid #e1e0d9; }
+  .layer { margin-bottom: 1.5rem; }
+  .layer-head { margin-bottom: 0.4rem; }
+  .layer-head h2 { flex: 1; }
+  .wave { border: 1px solid #e1e0d9; border-radius: 4px; background: #fff; min-height: 110px; }
+  #status, #time { color: #52514e; }
+  #time { font-variant-numeric: tabular-nums; }
+  #status.error { color: #d03b3b; }
+</style>
+</head>
+<body>
+
+<h1>Unmix viewer</h1>
+
+<div class="toolbar picker">
+  <label for="file">Clip from input/</label>
+  <select id="file"></select>
+  <button id="separate" disabled>Separate</button>
+  <button id="refresh" title="Look in input/ again">Refresh list</button>
+  <span id="status" role="status"></span>
+</div>
+
+<div class="toolbar">
+  <button id="play-all" disabled>Play all synced</button>
+  <span id="time"></span>
+</div>
+
+<div id="layers"></div>
+
+<script src="https://unpkg.com/wavesurfer.js@7.8.6/dist/wavesurfer.min.js"></script>
+<script>
+// The three layers. The colours match the plots in output/separation.png.
+const LAYERS = [
+  { name: "Original",   file: "../output/original.wav",   color: "#2a78d6" },
+  { name: "Foreground", file: "../output/foreground.wav", color: "#eb6834" },
+  { name: "Background", file: "../output/background.wav", color: "#1baf7a" },
+];
+
+const fileSelect = document.getElementById("file");
+const separateButton = document.getElementById("separate");
+const refreshButton = document.getElementById("refresh");
+const statusLabel = document.getElementById("status");
+const playAllButton = document.getElementById("play-all");
+const timeLabel = document.getElementById("time");
+
+// ---------------------------------------------------------------------------
+// The three waveform rows
+// ---------------------------------------------------------------------------
+
+// Build one row per layer: a title, a mute box, a play button and a waveform.
+// The waveforms start empty; loadLayers() fills them in.
+const players = LAYERS.map((layer) => {
+  const row = document.createElement("section");
+  row.className = "layer";
+  row.innerHTML = `
+    <div class="layer-head">
+      <h2>${layer.name}</h2>
+      <label><input type="checkbox"> Mute</label>
+      <button disabled>Play</button>
+    </div>
+    <div class="wave"></div>`;
+  document.getElementById("layers").append(row);
+
+  const wavesurfer = WaveSurfer.create({
+    container: row.querySelector(".wave"),
+    waveColor: layer.color,
+    progressColor: "#52514e",
+    cursorColor: "#0b0b0b",
+    height: 110,
+    // Draw every layer at its true height instead of stretching each one to
+    // fill its box, so a quiet layer looks quiet.
+    normalize: false,
+  });
+
+  const player = {
+    layer,
+    wavesurfer,
+    button: row.querySelector("button"),
+    mute: row.querySelector("input"),
+  };
+
+  // Clicking a waveform moves the playhead in all three, so they stay lined up.
+  wavesurfer.on("interaction", (time) => seekAll(time, player));
+
+  // Play button: play just this layer.
+  player.button.addEventListener("click", () => {
+    if (wavesurfer.isPlaying()) {
+      pauseAll();
+    } else {
+      pauseAll();
+      wavesurfer.play();
+    }
+  });
+
+  player.mute.addEventListener("change", () => wavesurfer.setMuted(player.mute.checked));
+
+  wavesurfer.on("play", updateButtons);
+  wavesurfer.on("pause", updateButtons);
+  wavesurfer.on("finish", updateButtons);
+  wavesurfer.on("timeupdate", (time) => {
+    if (wavesurfer.isPlaying()) showTime(time);
+  });
+
+  return player;
+});
+
+// Load (or reload) the three WAV files from output/ into the waveforms.
+async function loadLayers() {
+  setPlaybackEnabled(false);
+  timeLabel.textContent = "Loading waveforms…";
+  // The "?t=..." makes each address unique, so the browser fetches the new
+  // files instead of reusing the ones it loaded before.
+  const stamp = Date.now();
+  await Promise.all(players.map((p) => p.wavesurfer.load(`${p.layer.file}?t=${stamp}`)));
+  setPlaybackEnabled(true);
+  showTime(0);
+}
+
+function setPlaybackEnabled(enabled) {
+  playAllButton.disabled = !enabled;
+  players.forEach((p) => (p.button.disabled = !enabled));
+}
+
+function pauseAll() {
+  players.forEach((p) => p.wavesurfer.pause());
+}
+
+function seekAll(time, except) {
+  players.forEach((p) => {
+    if (p !== except) p.wavesurfer.setTime(time);
+  });
+  showTime(time);
+}
+
+// "Play all synced": put every layer at the same position, then start them
+// together. Use the Mute boxes to choose which layers you hear.
+playAllButton.addEventListener("click", () => {
+  const playingCount = players.filter((p) => p.wavesurfer.isPlaying()).length;
+  if (playingCount === players.length) {
+    pauseAll();
+    return;
+  }
+  const time = players[0].wavesurfer.getCurrentTime();
+  pauseAll();
+  seekAll(time);
+  players.forEach((p) => p.wavesurfer.play());
+});
+
+function updateButtons() {
+  const playing = players.map((p) => p.wavesurfer.isPlaying());
+  const allPlaying = playing.every(Boolean);
+  playAllButton.textContent = allPlaying ? "Pause all" : "Play all synced";
+  players.forEach((p, i) => {
+    p.button.textContent = playing[i] && !allPlaying ? "Pause" : "Play";
+  });
+}
+
+function showTime(seconds) {
+  const total = players[0].wavesurfer.getDuration();
+  timeLabel.textContent = `${format(seconds)} / ${format(total)}`;
+}
+
+function format(seconds) {
+  const minutes = Math.floor(seconds / 60);
+  const rest = Math.floor(seconds % 60);
+  return `${minutes}:${String(rest).padStart(2, "0")}`;
+}
+
+// ---------------------------------------------------------------------------
+// Choosing a clip and running the separation
+// ---------------------------------------------------------------------------
+
+function setStatus(text, isError = false) {
+  statusLabel.textContent = text;
+  statusLabel.classList.toggle("error", isError);
+}
+
+// Fill the dropdown with the clips the server found in input/.
+function showFiles(state) {
+  const previous = fileSelect.value;
+  fileSelect.replaceChildren(...state.files.map((name) => new Option(name, name)));
+  // Keep the current choice if it is still there; otherwise select the clip
+  // that the files in output/ were made from.
+  const preferred = [previous, state.source].find((name) => state.files.includes(name));
+  if (preferred) fileSelect.value = preferred;
+  separateButton.disabled = state.files.length === 0 || state.busy;
+}
+
+function describe(state) {
+  if (state.files.length === 0) return "No WAV or MP3 files in input/ yet.";
+  if (state.busy) return "A separation is already running. Refresh in a moment.";
+  if (!state.has_output) return "Choose a clip and press Separate.";
+  return state.source ? `Showing: ${state.source}` : "";
+}
+
+async function refresh() {
+  const state = await (await fetch("/api/state")).json();
+  showFiles(state);
+  setStatus(describe(state));
+  return state;
+}
+
+refreshButton.addEventListener("click", refresh);
+
+separateButton.addEventListener("click", async () => {
+  const name = fileSelect.value;
+  pauseAll();
+  setPlaybackEnabled(false);
+  separateButton.disabled = true;
+  fileSelect.disabled = true;
+
+  // The separation takes a while, so show a running clock while we wait.
+  const started = Date.now();
+  const tick = () =>
+    setStatus(`Separating ${name}… ${Math.round((Date.now() - started) / 1000)}s`);
+  tick();
+  const timer = setInterval(tick, 1000);
+
+  try {
+    const response = await fetch("/api/separate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ file: name }),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error);
+    clearInterval(timer);
+    showFiles(result);
+    await loadLayers();
+    setStatus(describe(result));
+  } catch (error) {
+    clearInterval(timer);
+    setStatus(error.message, true);
+    // The files in output/ are untouched after a failure, so the old
+    // waveforms are still valid.
+    setPlaybackEnabled(players[0].wavesurfer.getDuration() > 0);
+  } finally {
+    fileSelect.disabled = false;
+    separateButton.disabled = fileSelect.options.length === 0;
+  }
+});
+
+// On page load: list the clips, and show the last result if there is one.
+refresh()
+  .then((state) => (state.has_output ? loadLayers() : null))
+  .catch(() => setStatus("Could not reach the server. Start it with src/serve.py.", true));
+</script>
+</body>
+</html>
