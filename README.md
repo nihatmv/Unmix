@@ -1,13 +1,21 @@
 # Unmix
 
 A small learning project: split a clip of speech-over-music into two layers
-using classic DSP (no machine learning), and look at the waves along the way.
+and look at the waves along the way. It has two methods: a classic DSP one
+(REPET, no machine learning) and Demucs, a trained neural network.
 
 ## Setup
 
 ```
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
+```
+
+To use the Demucs method as well, install its extra packages (PyTorch and
+Demucs, about 200 MB). The versions are pinned to ones that work on an Intel Mac:
+
+```
+.venv/bin/pip install -r requirements-demucs.txt
 ```
 
 ## Step 1: look at the original audio
@@ -30,11 +38,30 @@ The script prints the clip's duration, sample rate and sample count, and saves
 This uses a REPET-style method: music repeats, speech doesn't. It saves
 `output/foreground.wav` (the non-repeating part, hopefully the speech) and
 `output/background.wav` (the repeating part, hopefully the music). Expect about
-40 seconds of processing per minute of audio. The clip must be longer than
+50 seconds of processing per minute of audio. The clip must be longer than
 about 4 seconds.
 
 The tuning knobs (`MARGIN_FOREGROUND`, `MARGIN_BACKGROUND`, `MASK_POWER`,
-`SIMILARITY_GAP_SECONDS`) are at the top of `src/separate.py`.
+`SIMILARITY_GAP_SECONDS`, `BACKGROUND_PERCENTILE`, `VOICE_LOW_CUTOFF_HZ`) are at
+the top of `src/separate.py`.
+
+### Choosing the method
+
+```
+.venv/bin/python src/separate.py --method repet     # the default
+.venv/bin/python src/separate.py --method demucs    # the neural network
+.venv/bin/python src/separate.py --method both      # run both and compare
+```
+
+`repet` and `demucs` save to `output/` as above, so the viewer in step 4 plays
+whichever you ran last. `both` saves each method's files to `output/repet/` and
+`output/demucs/` and draws `output/comparison.png`: the original and both
+methods' foreground and background waveforms, stacked on one time axis with the
+same y-scale. Every run prints how long each method took.
+
+Demucs lives in `src/separate_demucs.py`. It expects 44.1 kHz stereo, so the
+mono clip is duplicated into two channels (and resampled if needed) on the way
+in, and turned back into mono at the clip's own rate on the way out.
 
 ## Step 3: look at the separation
 

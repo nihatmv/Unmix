@@ -25,10 +25,16 @@ N_FFT = 2048
 HOP_LENGTH = 512
 
 
-def find_input_file():
-    """Return the audio file to load: the command-line path, or the first clip in input/."""
-    if len(sys.argv) > 1:
-        path = Path(sys.argv[1])
+def find_input_file(clip=None):
+    """Return the audio file to load: `clip` if given, or the first clip in input/.
+
+    Scripts that take nothing but a clip on the command line can call this
+    with no argument, and it reads the path from the command line itself.
+    """
+    if clip is None and len(sys.argv) > 1:
+        clip = sys.argv[1]
+    if clip is not None:
+        path = Path(clip)
         if not path.is_file():
             sys.exit(f"File not found: {path}")
         return path

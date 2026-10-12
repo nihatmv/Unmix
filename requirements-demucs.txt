@@ -1,0 +1,15 @@
+# Extra packages for the Demucs method (src/separate_demucs.py).
+# The REPET method only needs requirements.txt.
+-r requirements.txt
+
+# PyTorch 2.2.2 is the last release with a prebuilt package for Intel Macs.
+# torchaudio has to be the exact same version as torch.
+torch==2.2.2
+torchaudio==2.2.2
+
+# That PyTorch was built for NumPy 1.x and cannot exchange arrays with NumPy 2.
+numpy<2
+
+# Demucs 4.1.0 needs a package (sphn) that has no prebuilt Intel-Mac version,
+# so stay on 4.0.1, which is plain Python.
+demucs==4.0.1

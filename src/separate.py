@@ -1,5 +1,5 @@
 """
-Step 2: split the clip into two layers with a REPET-style method (no ML).
+Step 2: split the clip into two layers.
 
 Run from anywhere:
     .venv/bin/python src/separate.py            # first clip in input/
@@ -7,15 +7,23 @@ Run from anywhere:
 
 It saves:
     output/original.wav     the clip as loaded (mono), for comparison
-    output/foreground.wav   the non-repeating part (hopefully the speech)
-    output/background.wav   the repeating part     (hopefully the music)
+    output/foreground.wav   the voice layer
+    output/background.wav   the music layer
 
-The idea in one sentence: music repeats itself, speech doesn't. If a patch of
+There are two methods, chosen with --method:
+    --method repet    the REPET-style method in this file, no ML (the default)
+    --method demucs   a trained neural network, see separate_demucs.py
+    --method both     run both, save them to output/repet/ and output/demucs/,
+                      and draw output/comparison.png
+
+The REPET idea in one sentence: music repeats itself, speech doesn't. If a patch of
 the spectrogram looks the same every time a similar moment comes around, it is
 probably music; whatever sticks out above that is probably the voice.
 """
 
+import argparse
 import sys
+import time
 
 import librosa
 import numpy as np
@@ -246,38 +254,89 @@ def separate_with_mask(audio, sr):
     return foreground, background, mask_foreground
 
 
+def save_layers(folder, audio, foreground, background, sr, clip_name):
+    """Write the original and the two layers into `folder` as WAV files."""
+    folder.mkdir(parents=True, exist_ok=True)
+
+    # Save at the original sample rate so they play back at the right speed
+    # and pitch.
+    #
+    # The original is saved too, as the exact mono signal the separation
+    # worked on. All three files then have the same length and line up sample
+    # for sample, which the viewer relies on to play them in sync.
+    layers = {"original": audio, "foreground": foreground, "background": background}
+    for name, signal in layers.items():
+        path = folder / f"{name}.wav"
+        sf.write(path, signal, sr)
+        print(f"Saved:        {path}")
+
+    # Note which clip these files came from, so the viewer can show its name.
+    (folder / "source.txt").write_text(clip_name)
+
+
+def run_timed(label, method, audio, sr):
+    """Run one separation method and print how long it took."""
+    print(f"Separating with {label}... (this can take a little while on long clips)")
+    start = time.perf_counter()
+    foreground, background = method(audio, sr)
+    seconds = time.perf_counter() - start
+    print(f"{label} took {seconds:.1f} s")
+    return foreground, background
+
+
 def main():
-    audio_path = find_input_file()
+    parser = argparse.ArgumentParser(description="Split a clip into voice and music.")
+    parser.add_argument("clip", nargs="?", help="audio file (default: first clip in input/)")
+    parser.add_argument(
+        "--method",
+        choices=["repet", "demucs", "both"],
+        default="repet",
+        help="which separation method to run (default: repet)",
+    )
+    args = parser.parse_args()
+
+    audio_path = find_input_file(args.clip)
 
     # Same loading as in step 1: mono, at the file's own sample rate.
     audio, sr = librosa.load(audio_path, sr=None, mono=True)
     print(f"File:         {audio_path.name}")
     print(f"Duration:     {len(audio) / sr:.2f} seconds at {sr} Hz")
-    print("Separating... (this can take a little while on long clips)")
 
-    try:
-        foreground, background = separate(audio, sr)
-    except ValueError as error:
-        sys.exit(str(error))
+    # Run the chosen method, or both. `results` maps a method's name to its
+    # (foreground, background) pair.
+    results = {}
 
-    # Save both layers as WAV at the original sample rate so they play back at
-    # the right speed and pitch.
-    OUTPUT_DIR.mkdir(exist_ok=True)
-    #
-    # The original is saved too, as the exact mono signal the separation
-    # worked on. All three files then have the same length and line up sample
-    # for sample, which the viewer relies on to play them in sync.
-    original_path = OUTPUT_DIR / "original.wav"
-    foreground_path = OUTPUT_DIR / "foreground.wav"
-    background_path = OUTPUT_DIR / "background.wav"
-    sf.write(original_path, audio, sr)
-    sf.write(foreground_path, foreground, sr)
-    sf.write(background_path, background, sr)
-    # Note which clip these files came from, so the viewer can show its name.
-    (OUTPUT_DIR / "source.txt").write_text(audio_path.name)
-    print(f"Saved:        {original_path}")
-    print(f"Saved:        {foreground_path}")
-    print(f"Saved:        {background_path}")
+    if args.method in ("repet", "both"):
+        try:
+            results["repet"] = run_timed("REPET", separate, audio, sr)
+        except ValueError as error:
+            sys.exit(str(error))
+
+    if args.method in ("demucs", "both"):
+        # Demucs is imported only when asked for. It pulls in PyTorch, which is
+        # slow to load, and REPET should keep working without it installed.
+        try:
+            from separate_demucs import separate_demucs
+        except ImportError:
+            sys.exit(
+                "Demucs is not installed. Run: "
+                ".venv/bin/pip install -r requirements-demucs.txt"
+            )
+        results["demucs"] = run_timed("Demucs", separate_demucs, audio, sr)
+
+    if args.method == "both":
+        # Each method gets its own folder, so neither overwrites the other.
+        for name, (foreground, background) in results.items():
+            save_layers(OUTPUT_DIR / name, audio, foreground, background, sr, audio_path.name)
+
+        # Imported here because drawing is only needed in this mode.
+        from visualize_comparison import save_comparison
+
+        save_comparison(audio, results["repet"], results["demucs"], sr, audio_path.name)
+    else:
+        # A single method saves straight into output/, where the viewer looks.
+        foreground, background = results[args.method]
+        save_layers(OUTPUT_DIR, audio, foreground, background, sr, audio_path.name)
 
 
 if __name__ == "__main__":
