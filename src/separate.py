@@ -13,8 +13,12 @@ It saves:
 There are two methods, chosen with --method:
     --method repet    the REPET-style method in this file, no ML (the default)
     --method demucs   a trained neural network, see separate_demucs.py
-    --method both     run both, save them to output/repet/ and output/demucs/,
-                      and draw output/comparison.png
+    --method both     run both and draw output/comparison.png
+
+Every run also saves the same three files into the method's own folder,
+output/repet/ or output/demucs/. The viewer reads those two folders, so it can
+offer both versions to listen to. `both` fills the two folders and leaves the
+files directly in output/ alone.
 
 The REPET idea in one sentence: music repeats itself, speech doesn't. If a patch of
 the spectrogram looks the same every time a similar moment comes around, it is
@@ -324,17 +328,19 @@ def main():
             )
         results["demucs"] = run_timed("Demucs", separate_demucs, audio, sr)
 
-    if args.method == "both":
-        # Each method gets its own folder, so neither overwrites the other.
-        for name, (foreground, background) in results.items():
-            save_layers(OUTPUT_DIR / name, audio, foreground, background, sr, audio_path.name)
+    # Each method gets its own folder, so neither overwrites the other and the
+    # viewer can let you switch between the two.
+    for name, (foreground, background) in results.items():
+        save_layers(OUTPUT_DIR / name, audio, foreground, background, sr, audio_path.name)
 
+    if args.method == "both":
         # Imported here because drawing is only needed in this mode.
         from visualize_comparison import save_comparison
 
         save_comparison(audio, results["repet"], results["demucs"], sr, audio_path.name)
     else:
-        # A single method saves straight into output/, where the viewer looks.
+        # A single method also saves straight into output/, so the latest
+        # result is always in the same place.
         foreground, background = results[args.method]
         save_layers(OUTPUT_DIR, audio, foreground, background, sr, audio_path.name)
 

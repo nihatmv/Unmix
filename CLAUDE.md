@@ -20,7 +20,7 @@ Always use the project venv (`.venv/bin/python`), never the system Python.
 .venv/bin/pip install -r requirements.txt          # REPET only
 .venv/bin/pip install -r requirements-demucs.txt   # adds PyTorch + Demucs
 .venv/bin/python src/visualize_original.py   [clip]   # -> output/original.png
-.venv/bin/python src/separate.py             [clip]   # -> output/{original,foreground,background}.wav, source.txt
+.venv/bin/python src/separate.py             [clip]   # -> output/{original,foreground,background}.wav, source.txt (and a copy in output/repet/)
 .venv/bin/python src/separate.py --method demucs [clip]   # same files, made by Demucs
 .venv/bin/python src/separate.py --method both   [clip]   # -> output/repet/, output/demucs/, output/comparison.png
 .venv/bin/python src/visualize_comparison.py          # redraw comparison.png from those two folders
@@ -66,22 +66,29 @@ original but not equal to it.
    step 1 resampled, and trimmed/padded to the input's exact length.
 
 `separate.py --method` picks `repet` (default), `demucs` or `both`, and prints
-how long each took. A single method writes to `output/`, where the viewer
-looks. `both` writes to `output/repet/` and `output/demucs/`, leaves the
-top-level WAVs alone, and draws `output/comparison.png` (five waveforms, one
+how long each took. Every run writes each method's files to that method's own
+folder, `output/repet/` or `output/demucs/`, which is where the viewer looks.
+A single method also writes them to `output/` itself. `both` leaves the
+top-level WAVs alone and draws `output/comparison.png` (five waveforms, one
 y-scale).
 
 **Viewer** (`src/serve.py` + `viewer/index.html`):
 
 1. On load the page calls `GET /api/state` and fills the dropdown with the
-   clips in `input/`. If `output/` already has the three WAVs, it draws them.
-2. **Separate** sends `POST /api/separate {"file": name}`. The server checks
-   the name is really in `input/`, then runs `separate.py` on it as a
-   subprocess and replies when it has finished (or with the error's last line).
-   A lock allows one run at a time; a second request gets 409.
-3. The page reloads the three WAVs from `output/` into wavesurfer and shows
-   which clip they came from (`output/source.txt`).
-4. Playback: each layer has its own player. Clicking any waveform seeks all
+   clips in `input/`. The state lists two "versions", `repet` and `demucs`,
+   one per folder in `output/`. A version with all three WAVs can be chosen
+   under **Listen to**; the page draws the first one that exists.
+2. **Separate** sends `POST /api/separate {"file": name, "method": method}`,
+   where method is `repet`, `demucs` or `both` (the **Method** dropdown). The
+   server checks the name is really in `input/`, then runs `separate.py` on it
+   as a subprocess and replies when it has finished (or with the error's last
+   line). A lock allows one run at a time; a second request gets 409.
+3. The page loads the three WAVs of the version just made into wavesurfer
+   (after `both` it stays on the version you were hearing) and shows which clip
+   and method they are (`output/<method>/source.txt`).
+4. Switching **Listen to** loads the other version's three WAVs, keeps the
+   playhead and resumes whatever was playing.
+5. Playback: each layer has its own player. Clicking any waveform seeks all
    three; "Play all synced" aligns them and starts them together.
 
 ## Layout
@@ -95,7 +102,7 @@ y-scale).
 - `src/visualize_comparison.py` — `save_comparison()` and a standalone redraw.
 - `src/visualize_original.py`, `src/visualize_separation.py` — matplotlib plots.
 - `src/serve.py` — stdlib HTTP server: serves the project root, plus
-  `GET /api/state` and `POST /api/separate` (runs `separate.py` as a subprocess).
+  `GET /api/state` and `POST /api/separate` (runs `separate.py --method ...` as a subprocess).
 - `viewer/index.html` — single page, plain JS + wavesurfer.js 7.8.6 from unpkg. No frameworks, no build step.
 - `input/`, `output/` — git-ignored apart from `.gitkeep`. Not a git repo yet.
 
@@ -108,7 +115,7 @@ y-scale).
   or settings unless the user asks.
 - **Audio is loaded mono at the native sample rate** (`sr=None, mono=True`). Don't
   resample what gets saved. Demucs resamples internally only.
-- **The three WAVs in `output/` must be the same length**; the viewer's synced
+- **The three WAVs of a version must be the same length**; the viewer's synced
   playback relies on it. `original.wav` is the mono signal the separation used.
 - **Layer colours are shared** between the plots and the viewer: original
   `#2a78d6`, foreground `#eb6834`, background `#1baf7a`. Spectrograms use
@@ -134,9 +141,12 @@ y-scale).
   minute of audio on this CPU, including about 10 s to load.
 - **Port 8000 is used by another of the user's projects.** The viewer uses 8765.
   Don't kill whatever is on 8000.
-- **`output/` holds one result at a time.** Every run overwrites it, and the
-  PNGs are not redrawn by the viewer, so they can be from a different clip than
-  the WAVs (`output/source.txt` names the clip the WAVs came from).
+- **`output/` holds one result per method.** Every run overwrites the folders
+  of the methods it ran, so `output/repet/` and `output/demucs/` can hold
+  different clips (each folder's `source.txt` names its clip; the viewer's
+  status line shows it, and `visualize_comparison.py` refuses to compare two
+  different clips). The PNGs are not redrawn by the viewer, so they can be from
+  a different clip than the WAVs.
 - **`visualize_separation.py` re-runs the separation**, so it is slow.
   Separation takes roughly 50 s per minute of audio.
 - **Clips must be longer than about 4 s** (`2 * SIMILARITY_GAP_SECONDS`), or

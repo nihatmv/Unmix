@@ -53,11 +53,12 @@ the top of `src/separate.py`.
 .venv/bin/python src/separate.py --method both      # run both and compare
 ```
 
-`repet` and `demucs` save to `output/` as above, so the viewer in step 4 plays
-whichever you ran last. `both` saves each method's files to `output/repet/` and
-`output/demucs/` and draws `output/comparison.png`: the original and both
-methods' foreground and background waveforms, stacked on one time axis with the
-same y-scale. Every run prints how long each method took.
+`repet` and `demucs` save to `output/` as above. Every run also saves the same
+files into the method's own folder, `output/repet/` or `output/demucs/`, which
+is where the viewer in step 4 reads them, so it can offer both versions.
+`both` fills the two folders and draws `output/comparison.png`: the original
+and both methods' foreground and background waveforms, stacked on one time axis
+with the same y-scale. Every run prints how long each method took.
 
 Demucs lives in `src/separate_demucs.py`. It expects 44.1 kHz stereo, so the
 mono clip is duplicated into two channels (and resampled if needed) on the way
@@ -81,10 +82,13 @@ shared time axis, plus the foreground mask.
 
 This starts a small local server and opens `viewer/index.html`. There you can:
 
-- choose any WAV or MP3 from `input/` and press **Separate** to run the
-  separation without touching the terminal ("Refresh list" picks up files you
-  add while the page is open),
-- see the three layers from `output/` as waveforms, each with its own Play
+- choose any WAV or MP3 from `input/` and a **Method** (REPET, Demucs or
+  Both), then press **Separate** to run the separation without touching the
+  terminal ("Refresh list" picks up files you add while the page is open),
+- pick which version to hear with **Listen to**: REPET or Demucs. Switching
+  keeps the playhead where it is and keeps playing, so you can compare the two
+  on the same moment. The status line names the clip and method you are hearing,
+- see the three layers of that version as waveforms, each with its own Play
   button and Mute box,
 - press "Play all synced" to start all three together. Clicking any waveform
   moves the playhead in all of them.

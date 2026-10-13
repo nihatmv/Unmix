@@ -86,11 +86,20 @@ def main():
     ).is_file():
         sys.exit("Nothing to compare yet. Run: src/separate.py --method both")
 
+    # A run with a single method only refreshes its own folder, so the two can
+    # hold different clips. Comparing those would be meaningless.
+    clip_name = (repet_dir / "source.txt").read_text().strip()
+    demucs_clip_name = (demucs_dir / "source.txt").read_text().strip()
+    if clip_name != demucs_clip_name:
+        sys.exit(
+            f"output/repet/ holds {clip_name} but output/demucs/ holds "
+            f"{demucs_clip_name}. Run: src/separate.py --method both"
+        )
+
     # Both folders hold the same original, so read it from either one.
     audio, sr = sf.read(repet_dir / "original.wav")
     repet_layers = [sf.read(repet_dir / f"{name}.wav")[0] for name in ("foreground", "background")]
     demucs_layers = [sf.read(demucs_dir / f"{name}.wav")[0] for name in ("foreground", "background")]
-    clip_name = (repet_dir / "source.txt").read_text().strip()
 
     save_comparison(audio, repet_layers, demucs_layers, sr, clip_name)
 

@@ -22,6 +22,7 @@
   .toolbar, .layer-head { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
   .toolbar { margin-bottom: 1rem; }
   .picker { padding-bottom: 1rem; border-bottom: 1px solid #e1e0d9; }
+  .versions { display: flex; gap: 0.75rem; margin-right: 0.75rem; }
   .layer { margin-bottom: 1.5rem; }
   .layer-head { margin-bottom: 0.4rem; }
   .layer-head h2 { flex: 1; }
@@ -38,12 +39,23 @@
 <div class="toolbar picker">
   <label for="file">Clip from input/</label>
   <select id="file"></select>
+  <label for="method">Method</label>
+  <select id="method">
+    <option value="repet">REPET (quick, rough)</option>
+    <option value="demucs">Demucs (slower, cleaner)</option>
+    <option value="both">Both</option>
+  </select>
   <button id="separate" disabled>Separate</button>
   <button id="refresh" title="Look in input/ again">Refresh list</button>
   <span id="status" role="status"></span>
 </div>
 
 <div class="toolbar">
+  <span id="version-label">Listen to</span>
+  <span class="versions" role="radiogroup" aria-labelledby="version-label">
+    <label><input type="radio" name="version" value="repet" disabled> REPET</label>
+    <label><input type="radio" name="version" value="demucs" disabled> Demucs</label>
+  </span>
   <button id="play-all" disabled>Play all synced</button>
   <span id="time"></span>
 </div>
@@ -54,12 +66,18 @@
 <script>
 // The three layers. The colours match the plots in output/separation.png.
 const LAYERS = [
-  { name: "Original",   file: "../output/original.wav",   color: "#2a78d6" },
-  { name: "Foreground", file: "../output/foreground.wav", color: "#eb6834" },
-  { name: "Background", file: "../output/background.wav", color: "#1baf7a" },
+  { name: "Original",   file: "original.wav",   color: "#2a78d6" },
+  { name: "Foreground", file: "foreground.wav", color: "#eb6834" },
+  { name: "Background", file: "background.wav", color: "#1baf7a" },
 ];
 
+// The two separation methods. Each one's result is a "version" you can listen
+// to, kept in its own folder: output/repet/ and output/demucs/.
+const METHOD_NAMES = { repet: "REPET", demucs: "Demucs" };
+
 const fileSelect = document.getElementById("file");
+const methodSelect = document.getElementById("method");
+const versionRadios = [...document.querySelectorAll('input[name="version"]')];
 const separateButton = document.getElementById("separate");
 const refreshButton = document.getElementById("refresh");
 const statusLabel = document.getElementById("status");
@@ -127,22 +145,73 @@ const players = LAYERS.map((layer) => {
   return player;
 });
 
-// Load (or reload) the three WAV files from output/ into the waveforms.
-async function loadLayers() {
+// Load (or reload) one version's three WAV files into the waveforms.
+// `version` is "repet" or "demucs", the folder in output/ to read from.
+async function loadLayers(version) {
+  // Remember the position and what was playing. Switching version in the
+  // middle of listening then carries on from the same spot, which makes the
+  // two easy to compare.
+  const time = players[0].wavesurfer.getCurrentTime();
+  const wasPlaying = players.filter((p) => p.wavesurfer.isPlaying());
+  pauseAll();
   setPlaybackEnabled(false);
+  versionRadios.forEach((radio) => (radio.disabled = true));
   timeLabel.textContent = "Loading waveforms…";
+
   // The "?t=..." makes each address unique, so the browser fetches the new
   // files instead of reusing the ones it loaded before.
   const stamp = Date.now();
-  await Promise.all(players.map((p) => p.wavesurfer.load(`${p.layer.file}?t=${stamp}`)));
+  await Promise.all(
+    players.map((p) => p.wavesurfer.load(`../output/${version}/${p.layer.file}?t=${stamp}`))
+  );
+
   setPlaybackEnabled(true);
-  showTime(0);
+  showVersions();
+  // If the new files are shorter than the old position, start from the top.
+  seekAll(time < players[0].wavesurfer.getDuration() ? time : 0);
+  wasPlaying.forEach((p) => p.wavesurfer.play());
 }
 
 function setPlaybackEnabled(enabled) {
   playAllButton.disabled = !enabled;
   players.forEach((p) => (p.button.disabled = !enabled));
 }
+
+// ---------------------------------------------------------------------------
+// Choosing which version to listen to
+// ---------------------------------------------------------------------------
+
+// The server's latest answer to /api/state.
+let state = null;
+
+// A version can be chosen only if its folder in output/ holds the three files.
+function showVersions() {
+  versionRadios.forEach((radio) => {
+    radio.disabled = !state.versions[radio.value].has_output;
+  });
+}
+
+// The version that is selected, or null if there is nothing to listen to yet.
+function selectedVersion() {
+  const radio = versionRadios.find((r) => r.checked);
+  return radio ? radio.value : null;
+}
+
+// Select `preferred` if it has files. Otherwise keep the current choice, or
+// fall back to whichever version exists.
+function selectVersion(preferred) {
+  const available = (name) => name in state.versions && state.versions[name].has_output;
+  const choice = [preferred, selectedVersion(), "repet", "demucs"].find(available);
+  versionRadios.forEach((radio) => (radio.checked = radio.value === choice));
+  return choice;
+}
+
+versionRadios.forEach((radio) => {
+  radio.addEventListener("change", async () => {
+    await loadLayers(radio.value);
+    setStatus(describe());
+  });
+});
 
 function pauseAll() {
   players.forEach((p) => p.wavesurfer.pause());
@@ -199,43 +268,63 @@ function setStatus(text, isError = false) {
 }
 
 // Fill the dropdown with the clips the server found in input/.
-function showFiles(state) {
+function showFiles() {
   const previous = fileSelect.value;
   fileSelect.replaceChildren(...state.files.map((name) => new Option(name, name)));
   // Keep the current choice if it is still there; otherwise select the clip
-  // that the files in output/ were made from.
-  const preferred = [previous, state.source].find((name) => state.files.includes(name));
+  // that the selected version was made from.
+  const version = selectedVersion();
+  const source = version ? state.versions[version].source : null;
+  const preferred = [previous, source].find((name) => state.files.includes(name));
   if (preferred) fileSelect.value = preferred;
   separateButton.disabled = state.files.length === 0 || state.busy;
 }
 
-function describe(state) {
+function describe() {
   if (state.files.length === 0) return "No WAV or MP3 files in input/ yet.";
   if (state.busy) return "A separation is already running. Refresh in a moment.";
-  if (!state.has_output) return "Choose a clip and press Separate.";
-  return state.source ? `Showing: ${state.source}` : "";
+  const version = selectedVersion();
+  if (!version) return "Choose a clip and press Separate.";
+  // The two versions can come from different clips, so always say which clip
+  // and which method you are hearing.
+  const source = state.versions[version].source || "unknown clip";
+  return `Showing: ${source}, separated by ${METHOD_NAMES[version]}`;
+}
+
+// Take in a new answer from the server and update everything that shows it.
+// `preferredVersion` is the version to switch to, if it has files.
+function showState(newState, preferredVersion) {
+  state = newState;
+  showVersions();
+  const version = selectVersion(preferredVersion);
+  showFiles();
+  setStatus(describe());
+  return version;
 }
 
 async function refresh() {
-  const state = await (await fetch("/api/state")).json();
-  showFiles(state);
-  setStatus(describe(state));
-  return state;
+  return showState(await (await fetch("/api/state")).json());
 }
 
 refreshButton.addEventListener("click", refresh);
 
 separateButton.addEventListener("click", async () => {
   const name = fileSelect.value;
+  const method = methodSelect.value;
+  const methodLabel = METHOD_NAMES[method] || "REPET and Demucs";
   pauseAll();
   setPlaybackEnabled(false);
   separateButton.disabled = true;
   fileSelect.disabled = true;
+  methodSelect.disabled = true;
+  versionRadios.forEach((radio) => (radio.disabled = true));
 
   // The separation takes a while, so show a running clock while we wait.
   const started = Date.now();
   const tick = () =>
-    setStatus(`Separating ${name}… ${Math.round((Date.now() - started) / 1000)}s`);
+    setStatus(
+      `Separating ${name} with ${methodLabel}… ${Math.round((Date.now() - started) / 1000)}s`
+    );
   tick();
   const timer = setInterval(tick, 1000);
 
@@ -243,29 +332,35 @@ separateButton.addEventListener("click", async () => {
     const response = await fetch("/api/separate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ file: name }),
+      body: JSON.stringify({ file: name, method }),
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error);
     clearInterval(timer);
-    showFiles(result);
-    await loadLayers();
-    setStatus(describe(result));
+    // Show the version that was just made. After "Both", stay on the one you
+    // were listening to.
+    const version = showState(result, method);
+    // A new result starts from the beginning.
+    seekAll(0);
+    await loadLayers(version);
+    setStatus(describe());
   } catch (error) {
     clearInterval(timer);
     setStatus(error.message, true);
     // The files in output/ are untouched after a failure, so the old
     // waveforms are still valid.
     setPlaybackEnabled(players[0].wavesurfer.getDuration() > 0);
+    showVersions();
   } finally {
     fileSelect.disabled = false;
+    methodSelect.disabled = false;
     separateButton.disabled = fileSelect.options.length === 0;
   }
 });
 
 // On page load: list the clips, and show the last result if there is one.
 refresh()
-  .then((state) => (state.has_output ? loadLayers() : null))
+  .then((version) => (version ? loadLayers(version) : null))
   .catch(() => setStatus("Could not reach the server. Start it with src/serve.py.", true));
 </script>
 </body>
