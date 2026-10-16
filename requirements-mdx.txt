@@ -1,0 +1,11 @@
+# Extra package for the MDX-Net method (src/separate_mdx.py).
+# The REPET method only needs requirements.txt. This method does not need
+# PyTorch or Demucs.
+-r requirements.txt
+
+# The engine that runs the .onnx model file. 1.23.2 has a prebuilt package for
+# Intel Macs; newer releases may not, so stay on it.
+onnxruntime==1.23.2
+
+# The model file itself is not a Python package and is not installed by pip.
+# It has to be at models/Kim_Vocal_2.onnx (67 MB). See src/separate_mdx.py.

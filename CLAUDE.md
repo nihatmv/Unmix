@@ -2,7 +2,8 @@
 
 A Python learning project: split a clip of speech over music into two layers
 and look at / listen to the result. Phase 1 is classic DSP (REPET, no ML; git
-tag `phase-1-repet`). Phase 2 adds Demucs, a trained model, as a second method.
+tag `phase-1-repet`). Phase 2 adds two trained models as further methods:
+Demucs, and MDX-Net, a vocals-only model that leaves less music in the voice.
 
 ## The user is learning
 
@@ -19,9 +20,11 @@ Always use the project venv (`.venv/bin/python`), never the system Python.
 ```
 .venv/bin/pip install -r requirements.txt          # REPET only
 .venv/bin/pip install -r requirements-demucs.txt   # adds PyTorch + Demucs
+.venv/bin/pip install -r requirements-mdx.txt      # adds onnxruntime (MDX-Net)
 .venv/bin/python src/visualize_original.py   [clip]   # -> output/original.png
 .venv/bin/python src/separate.py             [clip]   # -> output/{original,foreground,background}.wav, source.txt (and a copy in output/repet/)
 .venv/bin/python src/separate.py --method demucs [clip]   # same files, made by Demucs
+.venv/bin/python src/separate.py --method mdx    [clip]   # same files, made by MDX-Net
 .venv/bin/python src/separate.py --method both   [clip]   # -> output/repet/, output/demucs/, output/comparison.png
 .venv/bin/python src/visualize_comparison.py          # redraw comparison.png from those two folders
 .venv/bin/python src/visualize_separation.py [clip]   # -> output/separation.png
@@ -65,28 +68,42 @@ original but not equal to it.
 4. Each layer is averaged back to mono, resampled back to the clip's rate if
    step 1 resampled, and trimmed/padded to the input's exact length.
 
-`separate.py --method` picks `repet` (default), `demucs` or `both`, and prints
-how long each took. Every run writes each method's files to that method's own
-folder, `output/repet/` or `output/demucs/`, which is where the viewer looks.
-A single method also writes them to `output/` itself. `both` leaves the
-top-level WAVs alone and draws `output/comparison.png` (five waveforms, one
-y-scale).
+**MDX-Net separation** (`separate_mdx` in `src/separate_mdx.py`):
+
+1. A working copy of the mono clip is resampled to 44.1 kHz if needed.
+2. The model file `models/Kim_Vocal_2.onnx` is loaded with onnxruntime (CPU).
+   The clip is cut into chunks of about 6 s, each a little wider than needed
+   so its unreliable edges can be thrown away.
+3. Per chunk: STFT (`MODEL_N_FFT` 7680, `MODEL_HOP` 1024, fixed by the model),
+   split into real and imaginary parts, duplicated to fake stereo. The model
+   returns the voice's spectrogram, which is turned back into sound.
+4. The chunks are joined, scaled by `LEVEL_FIX`, resampled back if step 1
+   resampled, and trimmed/padded to the input's exact length.
+5. Background = original minus voice, so here the two layers add up to the
+   original exactly.
+
+`separate.py --method` picks `repet` (default), `demucs`, `mdx` or `both`, and
+prints how long each took. Every run writes each method's files to that
+method's own folder, `output/repet/`, `output/demucs/` or `output/mdx/`, which
+is where the viewer looks. A single method also writes them to `output/`
+itself. `both` runs REPET and Demucs only, leaves the top-level WAVs alone and
+draws `output/comparison.png` (five waveforms, one y-scale).
 
 **Viewer** (`src/serve.py` + `viewer/index.html`):
 
 1. On load the page calls `GET /api/state` and fills the dropdown with the
-   clips in `input/`. The state lists two "versions", `repet` and `demucs`,
-   one per folder in `output/`. A version with all three WAVs can be chosen
+   clips in `input/`. The state lists three "versions", `repet`, `demucs` and
+   `mdx`, one per folder in `output/`. A version with all three WAVs can be chosen
    under **Listen to**; the page draws the first one that exists.
 2. **Separate** sends `POST /api/separate {"file": name, "method": method}`,
-   where method is `repet`, `demucs` or `both` (the **Method** dropdown). The
+   where method is `repet`, `demucs`, `mdx` or `both` (the **Method** dropdown). The
    server checks the name is really in `input/`, then runs `separate.py` on it
    as a subprocess and replies when it has finished (or with the error's last
    line). A lock allows one run at a time; a second request gets 409.
 3. The page loads the three WAVs of the version just made into wavesurfer
    (after `both` it stays on the version you were hearing) and shows which clip
    and method they are (`output/<method>/source.txt`).
-4. Switching **Listen to** loads the other version's three WAVs, keeps the
+4. Switching **Listen to** loads the chosen version's three WAVs, keeps the
    playhead and resumes whatever was playing.
 5. Playback: each layer has its own player. Clicking any waveform seeks all
    three; "Play all synced" aligns them and starts them together.
@@ -96,9 +113,13 @@ y-scale).
 - `src/common.py` — shared paths, `N_FFT`/`HOP_LENGTH`, `find_input_file()`.
   Every script imports from here; keep STFT settings in this one place.
 - `src/separate.py` — REPET-style separation (`librosa.decompose.nn_filter` + soft masks),
-  plus `main()` with the `--method` flag, timing and saving for both methods.
+  plus `main()` with the `--method` flag, timing and saving for every method.
 - `src/separate_demucs.py` — `separate_demucs(audio, sr)`. The only file that
   imports torch; `separate.py` imports it lazily so REPET works without it.
+- `src/separate_mdx.py` — `separate_mdx(audio, sr)`. The only file that imports
+  onnxruntime; also imported lazily. Needs no torch.
+- `models/` — trained model files (`Kim_Vocal_2.onnx`, 67 MB). Git-ignored
+  apart from `.gitkeep`.
 - `src/visualize_comparison.py` — `save_comparison()` and a standalone redraw.
 - `src/visualize_original.py`, `src/visualize_separation.py` — matplotlib plots.
 - `src/serve.py` — stdlib HTTP server: serves the project root, plus
@@ -108,13 +129,13 @@ y-scale).
 
 ## Things to preserve
 
-- **`separate(audio, sr)` and `separate_demucs(audio, sr)` share one interface:**
-  mono float array in, `(foreground, background)` of the same length out. Keep
-  both signatures. `separate_with_mask()` exists only so the plot can show the mask.
+- **`separate(audio, sr)`, `separate_demucs(audio, sr)` and `separate_mdx(audio, sr)`
+  share one interface:** mono float array in, `(foreground, background)` of the
+  same length out. Keep all three signatures. `separate_with_mask()` exists only so the plot can show the mask.
 - **The REPET method is the frozen Phase 1 baseline.** Don't change its logic
   or settings unless the user asks.
 - **Audio is loaded mono at the native sample rate** (`sr=None, mono=True`). Don't
-  resample what gets saved. Demucs resamples internally only.
+  resample what gets saved. Demucs and MDX-Net resample internally only.
 - **The three WAVs of a version must be the same length**; the viewer's synced
   playback relies on it. `original.wav` is the mono signal the separation used.
 - **Layer colours are shared** between the plots and the viewer: original
@@ -139,11 +160,21 @@ y-scale).
 - **Demucs loads its weights from `~/.cache/torch/hub/checkpoints/`** and
   downloads them (about 80 MB) if they are missing. It takes roughly 80 s per
   minute of audio on this CPU, including about 10 s to load.
+- **Never download or install without asking the user first.** That includes
+  model files, packages, and code that downloads as a side effect.
+  `separate_mdx.py` does not download its model: if `models/Kim_Vocal_2.onnx`
+  is missing it exits and names the source URL.
+- **onnxruntime was installed without its declared extras** (`coloredlogs`,
+  `flatbuffers`, `protobuf`), so `pip check` complains. Running the model does
+  not need them.
+- **MDX-Net takes about 1 s per second of audio on this CPU**, a little faster
+  than Demucs. Mel-Band RoFormer measured cleaner still on one test mix but
+  was far too slow here (around 15 s per second of audio); don't suggest it.
 - **Port 8000 is used by another of the user's projects.** The viewer uses 8765.
   Don't kill whatever is on 8000.
 - **`output/` holds one result per method.** Every run overwrites the folders
-  of the methods it ran, so `output/repet/` and `output/demucs/` can hold
-  different clips (each folder's `source.txt` names its clip; the viewer's
+  of the methods it ran, so `output/repet/`, `output/demucs/` and `output/mdx/`
+  can hold different clips (each folder's `source.txt` names its clip; the viewer's
   status line shows it, and `visualize_comparison.py` refuses to compare two
   different clips). The PNGs are not redrawn by the viewer, so they can be from
   a different clip than the WAVs.
@@ -151,8 +182,10 @@ y-scale).
   Separation takes roughly 50 s per minute of audio.
 - **Clips must be longer than about 4 s** (`2 * SIMILARITY_GAP_SECONDS`), or
   `separate` raises `ValueError`.
-- The method only works when the background repeats and the foreground doesn't.
+- REPET only works when the background repeats and the foreground doesn't.
   A music-only clip gives a near-empty foreground; that is expected, not a bug.
+- Demucs and MDX-Net put any human voice in the foreground, so singing or
+  humming in the music ends up with the speech.
 
 ## Checking changes
 
@@ -163,6 +196,13 @@ y-scale).
   source lands in each layer. Write test clips to a scratch folder, not `input/`.
 - The same known-source mixes work for Demucs; it should beat REPET clearly
   (around 10 dB or more better on the voice layer).
+- For the trained models, mixes of real speech plus real music tell more than
+  tone bursts. On four such mixes at equal loudness, voice versus leaked music
+  measured about 17 dB for Demucs and about 24 dB for MDX-Net. Changing
+  Demucs's `shifts`, overlap or model (`htdemucs_ft`) moved it by 1.5 dB at most.
+- The user often has their own `serve.py` running on 8765. Don't kill it; test
+  on another port (set `serve.PORT` before `serve.main()`). A server started
+  before a code change must be restarted by the user to pick it up.
 - For the viewer, start the server with `webbrowser.open` patched out (so no
   tab opens on the user's machine) and drive the page with headless Chrome at
   `/Applications/Google Chrome.app`.

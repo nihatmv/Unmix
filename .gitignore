@@ -8,3 +8,7 @@ input/*
 !input/.gitkeep
 output/*
 !output/.gitkeep
+
+# Trained model files are large; keep the empty folder.
+models/*
+!models/.gitkeep

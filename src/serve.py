@@ -28,8 +28,9 @@ from common import AUDIO_EXTENSIONS, INPUT_DIR, OUTPUT_DIR, PROJECT_DIR
 PORT = 8765
 LAYERS = ["original.wav", "foreground.wav", "background.wav"]
 # The separation methods. Each one's result lives in its own folder,
-# output/repet/ and output/demucs/, and the page calls each a "version".
-METHODS = ["repet", "demucs"]
+# output/repet/, output/demucs/ and output/mdx/, and the page calls each a
+# "version".
+METHODS = ["repet", "demucs", "mdx"]
 SEPARATE_SCRIPT = Path(__file__).resolve().parent / "separate.py"
 
 # Only one separation may run at a time: two at once would both write to the

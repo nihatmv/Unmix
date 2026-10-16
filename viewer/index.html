@@ -43,7 +43,8 @@
   <select id="method">
     <option value="repet">REPET (quick, rough)</option>
     <option value="demucs">Demucs (slower, cleaner)</option>
-    <option value="both">Both</option>
+    <option value="mdx">MDX-Net (cleanest voice)</option>
+    <option value="both">REPET + Demucs</option>
   </select>
   <button id="separate" disabled>Separate</button>
   <button id="refresh" title="Look in input/ again">Refresh list</button>
@@ -55,6 +56,7 @@
   <span class="versions" role="radiogroup" aria-labelledby="version-label">
     <label><input type="radio" name="version" value="repet" disabled> REPET</label>
     <label><input type="radio" name="version" value="demucs" disabled> Demucs</label>
+    <label><input type="radio" name="version" value="mdx" disabled> MDX-Net</label>
   </span>
   <button id="play-all" disabled>Play all synced</button>
   <span id="time"></span>
@@ -71,9 +73,10 @@ const LAYERS = [
   { name: "Background", file: "background.wav", color: "#1baf7a" },
 ];
 
-// The two separation methods. Each one's result is a "version" you can listen
-// to, kept in its own folder: output/repet/ and output/demucs/.
-const METHOD_NAMES = { repet: "REPET", demucs: "Demucs" };
+// The three separation methods. Each one's result is a "version" you can
+// listen to, kept in its own folder: output/repet/, output/demucs/ and
+// output/mdx/.
+const METHOD_NAMES = { repet: "REPET", demucs: "Demucs", mdx: "MDX-Net" };
 
 const fileSelect = document.getElementById("file");
 const methodSelect = document.getElementById("method");
@@ -146,7 +149,7 @@ const players = LAYERS.map((layer) => {
 });
 
 // Load (or reload) one version's three WAV files into the waveforms.
-// `version` is "repet" or "demucs", the folder in output/ to read from.
+// `version` is "repet", "demucs" or "mdx", the folder in output/ to read from.
 async function loadLayers(version) {
   // Remember the position and what was playing. Switching version in the
   // middle of listening then carries on from the same spot, which makes the
@@ -201,7 +204,7 @@ function selectedVersion() {
 // fall back to whichever version exists.
 function selectVersion(preferred) {
   const available = (name) => name in state.versions && state.versions[name].has_output;
-  const choice = [preferred, selectedVersion(), "repet", "demucs"].find(available);
+  const choice = [preferred, selectedVersion(), "repet", "demucs", "mdx"].find(available);
   versionRadios.forEach((radio) => (radio.checked = radio.value === choice));
   return choice;
 }
@@ -285,7 +288,7 @@ function describe() {
   if (state.busy) return "A separation is already running. Refresh in a moment.";
   const version = selectedVersion();
   if (!version) return "Choose a clip and press Separate.";
-  // The two versions can come from different clips, so always say which clip
+  // The versions can come from different clips, so always say which clip
   // and which method you are hearing.
   const source = state.versions[version].source || "unknown clip";
   return `Showing: ${source}, separated by ${METHOD_NAMES[version]}`;
@@ -337,7 +340,7 @@ separateButton.addEventListener("click", async () => {
     const result = await response.json();
     if (!response.ok) throw new Error(result.error);
     clearInterval(timer);
-    // Show the version that was just made. After "Both", stay on the one you
+    // Show the version that was just made. After "REPET + Demucs", stay on the one you
     // were listening to.
     const version = showState(result, method);
     // A new result starts from the beginning.

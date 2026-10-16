@@ -10,15 +10,16 @@ It saves:
     output/foreground.wav   the voice layer
     output/background.wav   the music layer
 
-There are two methods, chosen with --method:
+There are three methods, chosen with --method:
     --method repet    the REPET-style method in this file, no ML (the default)
     --method demucs   a trained neural network, see separate_demucs.py
-    --method both     run both and draw output/comparison.png
+    --method mdx      a network trained only to find the voice, see separate_mdx.py
+    --method both     run REPET and Demucs and draw output/comparison.png
 
 Every run also saves the same three files into the method's own folder,
-output/repet/ or output/demucs/. The viewer reads those two folders, so it can
-offer both versions to listen to. `both` fills the two folders and leaves the
-files directly in output/ alone.
+output/repet/, output/demucs/ or output/mdx/. The viewer reads those folders,
+so it can offer each version to listen to. `both` fills the REPET and Demucs
+folders and leaves the files directly in output/ alone.
 
 The REPET idea in one sentence: music repeats itself, speech doesn't. If a patch of
 the spectrogram looks the same every time a similar moment comes around, it is
@@ -293,7 +294,7 @@ def main():
     parser.add_argument("clip", nargs="?", help="audio file (default: first clip in input/)")
     parser.add_argument(
         "--method",
-        choices=["repet", "demucs", "both"],
+        choices=["repet", "demucs", "mdx", "both"],
         default="repet",
         help="which separation method to run (default: repet)",
     )
@@ -306,7 +307,7 @@ def main():
     print(f"File:         {audio_path.name}")
     print(f"Duration:     {len(audio) / sr:.2f} seconds at {sr} Hz")
 
-    # Run the chosen method, or both. `results` maps a method's name to its
+    # Run the chosen method (or two, for `both`). `results` maps a method's name to its
     # (foreground, background) pair.
     results = {}
 
@@ -327,6 +328,18 @@ def main():
                 ".venv/bin/pip install -r requirements-demucs.txt"
             )
         results["demucs"] = run_timed("Demucs", separate_demucs, audio, sr)
+
+    if args.method == "mdx":
+        # Imported only when asked for, like Demucs: it needs onnxruntime, and
+        # the other methods should keep working without it installed.
+        try:
+            from separate_mdx import separate_mdx
+        except ImportError:
+            sys.exit(
+                "onnxruntime is not installed. Run: "
+                ".venv/bin/pip install -r requirements-mdx.txt"
+            )
+        results["mdx"] = run_timed("MDX-Net", separate_mdx, audio, sr)
 
     # Each method gets its own folder, so neither overwrites the other and the
     # viewer can let you switch between the two.
